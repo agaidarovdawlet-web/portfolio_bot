@@ -38,7 +38,7 @@ class AIService:
         genai.configure(api_key=settings.gemini_api_key.get_secret_value())
         
         # Рекомендую gemini-1.5-flash или 2.0-flash для скорости и стабильности
-        self.model_name = "gemini-1.5-flash"
+        self.model_name = "gemini-1.5-flash-latest"
         
         self.model = genai.GenerativeModel(
             model_name=self.model_name,

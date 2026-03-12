@@ -11,7 +11,7 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Улучшенный системный промт с акцентом на ключевые достижения
+# Улучшенный системный промт
 SYSTEM_PROMPT = f"""
 Ты — умный ИИ-ассистент Даулета Агайдарова. Твоя задача — презентовать его как Python-разработчика.
 
@@ -24,20 +24,23 @@ SYSTEM_PROMPT = f"""
 ПРИОРИТЕТЫ В ОТВЕТАХ:
 1. Обязательно упоминай благодарность от Яндекс Практикума, если спрашивают об успехах в ИИ или обучении.
 2. При вопросах об опыте делай акцент на работе в Т-Банке, Энергосбыт Плюс и стажировке в ОРЕНБУРГ БАНКЕ.
-3. Используй профессиональную лексику: "ведение отчетности для группы" вместо "староста", "сайт для салона красоты" вместо "сайт для мамы".
+3. Используй профессиональную лексику.
 
 ПРАВИЛА ОФОРМЛЕНИЯ (СТРОГО):
 - Используй ТОЛЬКО HTML: <b>жирный</b>, <i>курсив</i>.
 - НИКАКИХ символов #, *, _, ** или ---.
 - Списки только через буллит "•".
-- Разделяй блоки пустой строкой.
 """
 
 class AIService:
     def __init__(self):
+        # 1. Настраиваем API
         genai.configure(api_key=settings.gemini_api_key.get_secret_value())
         
-   model = genai.GenerativeModel('gemini-2.0-flash')
+        # 2. Указываем имя модели (теперь точно правильное)
+        self.model_name = 'gemini-2.0-flash'
+        
+        # 3. Инициализируем модель с настройками безопасности
         self.model = genai.GenerativeModel(
             model_name=self.model_name,
             safety_settings={
@@ -48,10 +51,11 @@ class AIService:
             }
         )
         logger.info(f"AI service initialized with {self.model_name}")
-    
+
     async def ask_question(self, question: str) -> str:
         try:
             full_prompt = f"{SYSTEM_PROMPT}\n\nВопрос пользователя: {question}"
+            # Используем self.model
             response = await self.model.generate_content_async(full_prompt)
             
             if response and response.text:
@@ -61,24 +65,15 @@ class AIService:
         except Exception as e:
             logger.error(f"Error calling Gemini API: {e}")
             return "Произошла ошибка при обращении к ИИ. Попробуйте спросить позже."
-    
+
     def _clean_response_text(self, text: str) -> str:
         """Очищает текст ответа от Markdown и преобразует в чистый HTML."""
-        # 1. Заменяем двойные звездочки на <b>...</b> корректно через регулярку
         text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
-        
-        # 2. Заменяем одиночные звездочки на <i>...</i>
         text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
-        
-        # 3. Удаляем технические символы Markdown
         text = text.replace('#', '').replace('_', '').replace('`', '')
-        
-        # 4. Форматируем списки (заменяем дефисы в начале строк на буллиты)
         text = re.sub(r'^\s*[-*]\s+', '• ', text, flags=re.MULTILINE)
-        
-        # 5. Убираем лишние пустые строки
         text = re.sub(r'\n{3,}', '\n\n', text)
-        
         return text.strip()
 
+# Создаем экземпляр сервиса
 ai_service = AIService()

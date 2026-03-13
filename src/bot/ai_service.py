@@ -38,7 +38,7 @@ class AIService:
         genai.configure(api_key=settings.gemini_api_key.get_secret_value())
         
         # 2. Указываем имя модели (теперь точно правильное)
-        self.model_name = 'gemini-2.0-flash'
+        self.model_name = 'gemini-2.5-flash'
         
         # 3. Инициализируем модель с настройками безопасности
         self.model = genai.GenerativeModel(

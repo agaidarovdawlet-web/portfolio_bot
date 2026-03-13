@@ -24,12 +24,13 @@ SYSTEM_PROMPT = f"""
 ПРИОРИТЕТЫ В ОТВЕТАХ:
 1. Обязательно упоминай благодарность от Яндекс Практикума, если спрашивают об успехах в ИИ или обучении.
 2. При вопросах об опыте делай акцент на работе в Т-Банке, Энергосбыт Плюс и стажировке в ОРЕНБУРГ БАНКЕ.
-3. Используй профессиональную лексику.
+3. Используй профессиональную лексику: "ведение отчетности для группы" вместо "староста".
 
 ПРАВИЛА ОФОРМЛЕНИЯ (СТРОГО):
 - Используй ТОЛЬКО HTML: <b>жирный</b>, <i>курсив</i>.
 - НИКАКИХ символов #, *, _, ** или ---.
 - Списки только через буллит "•".
+- НЕ используй теги <p>, <div>, <span>.
 """
 
 class AIService:
@@ -60,14 +61,24 @@ class AIService:
             logger.error(f"Error calling Gemini API: {e}")
             return "Произошла ошибка при обращении к ИИ. Попробуйте спросить позже."
 
-  def _clean_response_text(self, text: str) -> str:
-        """Очищает текст ответа от Markdown и неподдерживаемых Telegram HTML-тегов."""
+    def _clean_response_text(self, text: str) -> str:
+        """Очищает текст ответа от Markdown и неподдерживаемых HTML-тегов."""
+    
         text = re.sub(r'</?(p|div|span|section|article)>', '\n', text)
+        
+        
         text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
         text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
+        
+        
         text = text.replace('#', '').replace('_', '').replace('`', '')
+        
+        
         text = re.sub(r'^\s*[-*]\s+', '• ', text, flags=re.MULTILINE)
+        
         text = re.sub(r'\n{3,}', '\n\n', text)
         
         return text.strip()
+
+
 ai_service = AIService()

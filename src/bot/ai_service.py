@@ -34,13 +34,8 @@ SYSTEM_PROMPT = f"""
 
 class AIService:
     def __init__(self):
-        # 1. Настраиваем API
         genai.configure(api_key=settings.gemini_api_key.get_secret_value())
-        
-        # 2. Указываем имя модели (теперь точно правильное)
         self.model_name = 'gemini-2.5-flash'
-        
-        # 3. Инициализируем модель с настройками безопасности
         self.model = genai.GenerativeModel(
             model_name=self.model_name,
             safety_settings={
@@ -55,7 +50,6 @@ class AIService:
     async def ask_question(self, question: str) -> str:
         try:
             full_prompt = f"{SYSTEM_PROMPT}\n\nВопрос пользователя: {question}"
-            # Используем self.model
             response = await self.model.generate_content_async(full_prompt)
             
             if response and response.text:
@@ -66,14 +60,14 @@ class AIService:
             logger.error(f"Error calling Gemini API: {e}")
             return "Произошла ошибка при обращении к ИИ. Попробуйте спросить позже."
 
-    def _clean_response_text(self, text: str) -> str:
-        """Очищает текст ответа от Markdown и преобразует в чистый HTML."""
+  def _clean_response_text(self, text: str) -> str:
+        """Очищает текст ответа от Markdown и неподдерживаемых Telegram HTML-тегов."""
+        text = re.sub(r'</?(p|div|span|section|article)>', '\n', text)
         text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
         text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
         text = text.replace('#', '').replace('_', '').replace('`', '')
         text = re.sub(r'^\s*[-*]\s+', '• ', text, flags=re.MULTILINE)
         text = re.sub(r'\n{3,}', '\n\n', text)
+        
         return text.strip()
-
-# Создаем экземпляр сервиса
 ai_service = AIService()

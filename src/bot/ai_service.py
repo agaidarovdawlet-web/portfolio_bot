@@ -16,16 +16,28 @@ SYSTEM_PROMPT = f"""
 class AIService:
     def __init__(self):
         genai.configure(api_key=settings.gemini_api_key.get_secret_value())
+        
+        safe_config = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
+
         self.model = genai.GenerativeModel(
-            model_name='gemini-2.5-flash', 
-            safety_settings={cat: HarmBlockThreshold.BLOCK_NONE for cat in HarmCategory}
+            model_name='gemini-2.5-flash',
+            safety_settings=safe_config
         )
 
     async def ask_question(self, question: str) -> str:
         try:
             full_prompt = f"{SYSTEM_PROMPT}\n\nВопрос: {question}"
             response = await self.model.generate_content_async(full_prompt)
-            return self._clean_response_text(response.text.strip()) if response.text else "Ошибка ответа."
+            
+            if response.candidates and response.text:
+                return self._clean_response_text(response.text.strip())
+            return "Извини, я не могу ответить на этот вопрос."
+            
         except Exception as e:
             logger.error(f"AI Error: {e}")
             return "Техническая заминка с ИИ."

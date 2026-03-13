@@ -7,40 +7,50 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
+
 SYSTEM_PROMPT = f"""
-Ты — умный ИИ-ассистент Даулета Агайдарова. Презентуй его как Python-разработчика.
+Ты — краткий ассистент разработчика Даулета Агайдарова.
 ИНФОРМАЦИЯ: {ABOUT_TEXT} {PROJECTS_TEXT} {SKILLS_TEXT} {CONTACTS_TEXT}
-ПРАВИЛА: Используй ТОЛЬКО HTML (<b>, <i>). Списки через "•".
+
+ПРАВИЛА:
+1. Отвечай максимально КРАТКО (1-3 предложения).
+2. Только СУТЬ. Без приветствий, без "конечно", без "рад помочь".
+3. Формат: ТОЛЬКО HTML (<b>, <i>). Списки через "•".
+4. Если информации нет — пиши: "Данные отсутствуют."
 """
 
 class AIService:
     def __init__(self):
         genai.configure(api_key=settings.gemini_api_key.get_secret_value())
         
-        safe_config = {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        }
-
         self.model = genai.GenerativeModel(
             model_name='gemini-2.5-flash',
-            safety_settings=safe_config
+            safety_settings={
+                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            },
+            generation_config={
+                "temperature": 0.3, 
+                "top_p": 0.8,
+                "max_output_tokens": 150, 
+            }
         )
 
     async def ask_question(self, question: str) -> str:
         try:
-            full_prompt = f"{SYSTEM_PROMPT}\n\nВопрос: {question}"
-            response = await self.model.generate_content_async(full_prompt)
+            
+            prompt = f"{SYSTEM_PROMPT}\n\nВопрос: {question}\nОтвет (кратко):"
+            response = await self.model.generate_content_async(prompt)
             
             if response.candidates and response.text:
                 return self._clean_response_text(response.text.strip())
-            return "Извини, я не могу ответить на этот вопрос."
+            return "Нет ответа."
             
         except Exception as e:
             logger.error(f"AI Error: {e}")
-            return "Техническая заминка с ИИ."
+            return "Ошибка ИИ."
 
     def _clean_response_text(self, text: str) -> str:
         text = re.sub(r'</?(p|div|span|section|article)>', '\n', text)

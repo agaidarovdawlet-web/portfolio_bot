@@ -91,18 +91,25 @@ async def cb_contacts(callback: CallbackQuery) -> None:
     await safe_edit_text(callback, CONTACTS_TEXT, back_keyboard(), disable_web_page_preview=True)
     await callback.answer()
 
+# ── AI CHAT LOGIC ─────────────────────────────────────────────────────────────
+
 @router.callback_query(F.data == "ask_ai")
 async def cb_ask_ai(callback: CallbackQuery, state: FSMContext) -> None:
+    # При входе в чат устанавливаем состояние и ОБНУЛЯЕМ историю
     await state.set_state(AIChatStates.chatting)
+    await state.update_data(chat_history=[]) 
+    
     text = (
-        "🤖 Задайте мне любой вопрос о Даулете!\n\n"
-        "Например: Какие технологии он использует?"
+        "🤖 <b>Я готов к общению!</b>\n\n"
+        "Задайте любой вопрос о Даулете. Я запоминаю контекст нашей беседы, "
+        "поэтому вы можете задавать уточняющие вопросы."
     )
     await safe_edit_text(callback, text, ai_chat_keyboard())
     await callback.answer()
 
 @router.message(AIChatStates.chatting, F.text == "⬅️ Назад в меню")
 async def handle_back_to_menu(message: Message, state: FSMContext) -> None:
+    # При выходе полностью очищаем стейт и историю
     await state.clear()
     user = message.from_user
     text = f"Привет, <b>{user.first_name}</b>! Выбери раздел 👇"
@@ -110,11 +117,25 @@ async def handle_back_to_menu(message: Message, state: FSMContext) -> None:
 
 @router.message(AIChatStates.chatting)
 async def handle_ai_question(message: Message, state: FSMContext) -> None:
-    if not message.text: return
+    if not message.text or message.text == "⬅️ Назад в меню": return
     
+    # 1. Получаем текущую историю из FSM
+    data = await state.get_data()
+    history = data.get("chat_history", [])
+
     thinking = await message.answer("🤔 Думаю...")
+    
     try:
-        response = await ai_service.ask_question(message.text)
+        # 2. Передаем вопрос и историю в ИИ
+        response = await ai_service.ask_question(message.text, history=history)
+        
+        # 3. Обновляем историю (формат роли: user / model)
+        history.append({"role": "user", "parts": [message.text]})
+        history.append({"role": "model", "parts": [response]})
+        
+        # Сохраняем последние 10 сообщений, чтобы не перегружать контекст
+        await state.update_data(chat_history=history[-10:])
+        
         await thinking.delete()
         await message.answer(
             text=response,

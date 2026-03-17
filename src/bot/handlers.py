@@ -6,7 +6,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from aiogram.exceptions import TelegramBadRequest # Добавлено
+from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
 
@@ -33,10 +33,8 @@ async def _upsert_user(telegram_id: int, username: str | None, first_name: str) 
     )
     async with get_session() as session:
         await session.execute(stmt)
-    logger.debug("upsert user telegram_id=%s username=%s", telegram_id, username)
 
 async def safe_edit_text(callback: CallbackQuery, text: str, reply_markup=None, **kwargs):
-    """Вспомогательная функция для безопасного редактирования текста."""
     try:
         await callback.message.edit_text(
             text=text, 
@@ -50,26 +48,21 @@ async def safe_edit_text(callback: CallbackQuery, text: str, reply_markup=None, 
         else:
             raise e
 
-# ── /start ────────────────────────────────────────────────────────────────────
+# ── Handlers ──────────────────────────────────────────────────────────────────
 
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     user = message.from_user
-    if user is None: return
+    if not user: return
     
-    await _upsert_user(
-        telegram_id=user.id,
-        username=user.username,
-        first_name=user.first_name or "",
-    )
+    await _upsert_user(user.id, user.username, user.first_name or "")
+    
     greeting = (
         f"👋 Привет, <b>{user.first_name}</b>!\n\n"
         f"Я — бот-портфолио <b>{settings.owner_name}</b>.\n"
-        "Выбери раздел, который тебя интересует 👇"
+        "Выбери раздел 👇"
     )
     await message.answer(text=greeting, reply_markup=main_menu_keyboard(), parse_mode="HTML")
-
-# ── Inline callbacks ──────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "main_menu")
 async def cb_main_menu(callback: CallbackQuery) -> None:
@@ -102,13 +95,11 @@ async def cb_contacts(callback: CallbackQuery) -> None:
 async def cb_ask_ai(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AIChatStates.chatting)
     text = (
-        "🤖 Задайте мне любой вопрос о владельце портфолио!\n\n"
-        "Например:\n• Какой опыт работы у разработчика?\n• Какие технологии он использует?"
+        "🤖 Задайте мне любой вопрос о Даулете!\n\n"
+        "Например: Какие технологии он использует?"
     )
     await safe_edit_text(callback, text, ai_chat_keyboard())
     await callback.answer()
-
-# ── AI Chat Logic ─────────────────────────────────────────────────────────────
 
 @router.message(AIChatStates.chatting, F.text == "⬅️ Назад в меню")
 async def handle_back_to_menu(message: Message, state: FSMContext) -> None:
@@ -119,14 +110,12 @@ async def handle_back_to_menu(message: Message, state: FSMContext) -> None:
 
 @router.message(AIChatStates.chatting)
 async def handle_ai_question(message: Message, state: FSMContext) -> None:
-    if not message.text:
-        await message.answer("Пожалуйста, отправьте текстовый вопрос.")
-        return
+    if not message.text: return
     
     thinking = await message.answer("🤔 Думаю...")
     try:
         response = await ai_service.ask_question(message.text)
-        await thinking.delete() # Удаляем "Думаю..." перед ответом
+        await thinking.delete()
         await message.answer(
             text=response,
             reply_markup=ai_chat_keyboard(),
@@ -134,7 +123,5 @@ async def handle_ai_question(message: Message, state: FSMContext) -> None:
             disable_web_page_preview=True
         )
     except Exception as e:
-        logger.error(f"Error in AI question handler: {e}")
-        await thinking.edit_text("😔 Произошла ошибка. Попробуйте позже.")
-        parse_mode="HTML",
-    )
+        logger.error(f"AI Error: {e}")
+        await thinking.edit_text("😔 Ошибка ИИ. Попробуйте позже.")

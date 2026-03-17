@@ -7,23 +7,22 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Обновленный промпт для глубоких ответов
+# Системный промпт теперь содержит четкие правила по объему ответов
 SYSTEM_PROMPT = f"""
-Ты — профессиональный ИИ-ассистент Даулета Агайдарова. Твоя цель — максимально подробно и технически грамотно представлять Даулета рекрутерам и заказчикам.
+Ты — профессиональный ИИ-ассистент Даулета Агайдарова. Твоя цель — представлять Даулета рекрутерам.
 
-ДАННЫЕ ДЛЯ РАБОТЫ:
+ДАННЫЕ:
 1. О разработчике: {ABOUT_TEXT}
-2. Технические кейсы: {PROJECTS_TEXT}
-3. Стек технологий: {SKILLS_TEXT}
+2. Проекты: {PROJECTS_TEXT}
+3. Стек: {SKILLS_TEXT}
 4. Контакты: {CONTACTS_TEXT}
 
-ИНСТРУКЦИИ ПО ОТВЕТУ:
-- Отвечай РАЗВЕРНУТО и информативно. Если спрашивают про стек — перечисляй его по категориям.
-- Если спрашивают про опыт — связывай его с конкретными достижениями и компаниями (ЭнергосбыТ Плюс, Т-Банк).
-- При описании проектов делай акцент на технических сложностях (Race Condition, FSM, Asyncio).
-- Соблюдай структуру: используй <b> для заголовков и важных терминов, и "•" для списков.
-- Форматирование: ТОЛЬКО HTML (<b>, <i>). Не используй Markdown (* или #).
-- Если вопрос не касается Даулета или IT, вежливо вернись к теме его профессиональных навыков.
+ПРАВИЛА ОТВЕТА:
+- На ПЕРВЫЙ вопрос или общие темы (стек, опыт) отвечай ПОДРОБНО с заголовками <b>.
+- На УТОЧНЯЮЩИЕ вопросы в ходе диалога отвечай КРАТКО (до 3-4 предложений).
+- Если тебя благодарят или прощаются — отвечай вежливо и лаконично.
+- Форматирование: ТОЛЬКО HTML (<b>, <i>). Никакого Markdown (* или #).
+- Вместо знаков "-" или "*" в списках используй "•".
 """
 
 class AIService:
@@ -39,32 +38,45 @@ class AIService:
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
             },
             generation_config={
-                "temperature": 0.7,      # Умеренная креативность для живого общения
+                "temperature": 0.7,
                 "top_p": 0.95,
-                "max_output_tokens": 1500, # Увеличили лимит для длинных ответов
+                "max_output_tokens": 1000,
             }
         )
 
-    async def ask_question(self, question: str) -> str:
+    async def ask_question(self, question: str, history: list = None) -> str:
+        """
+        Принимает вопрос и историю сообщений в формате Gemini:
+        [{'role': 'user', 'parts': ['...']}, {'role': 'model', 'parts': ['...']}]
+        """
         try:
-            # Убрали пометку "(кратко)" из запроса
-            prompt = f"{SYSTEM_PROMPT}\n\nВопрос пользователя: {question}\nТвой развернутый ответ ассистента:"
-            response = await self.model.generate_content_async(prompt)
+            # Инициализируем чат. Первым сообщением ВСЕГДА идет системный промпт, 
+            # чтобы модель знала контекст, даже если история пуста.
+            chat = self.model.start_chat(history=history or [])
+            
+            # Если это начало диалога (история пуста), добавляем промпт к первому вопросу
+            if not history:
+                full_query = f"{SYSTEM_PROMPT}\n\nПользователь: {question}"
+            else:
+                full_query = question
+
+            response = await chat.send_message_async(full_query)
             
             if response.candidates and response.text:
                 return self._clean_response_text(response.text.strip())
-            return "Извини, не удалось сформировать подробный ответ."
+            return "Извини, не удалось сформировать ответ."
             
         except Exception as e:
             logger.error(f"AI Error: {e}")
-            return "Произошла техническая ошибка при обращении к ИИ."
+            return "Произошла техническая ошибка. Попробуйте еще раз через минуту."
 
     def _clean_response_text(self, text: str) -> str:
-        # Очистка от Markdown и лишних тегов
-        text = re.sub(r'</?(p|div|span|section|article)>', '\n', text)
+        # Убираем Markdown жирный и курсив, заменяя на HTML
         text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
         text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
-        text = text.replace('#', '').replace('_', '').replace('`', '')
+        # Убираем заголовки Markdown (#) и обратные кавычки
+        text = text.replace('#', '').replace('`', '')
+        # Заменяем маркеры списков на красивые буллиты
         text = re.sub(r'^\s*[-*]\s+', '• ', text, flags=re.MULTILINE)
         return text.strip()
 

@@ -1,5 +1,4 @@
 import logging
-import re
 from typing import Dict
 from aiogram import F, Router
 from aiogram.fsm.state import State, StatesGroup
@@ -7,8 +6,8 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from aiogram.exceptions import TelegramBadRequest
-from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
+from google.api_core import exceptions as google_exceptions
 
 from src.bot.ai_service import ai_service
 from src.bot.content import ABOUT_TEXT, CONTACTS_TEXT, PROJECTS_TEXT, SKILLS_TEXT
@@ -35,6 +34,7 @@ async def _upsert_user(telegram_id: int, username: str | None, first_name: str) 
         await session.execute(stmt)
 
 async def safe_edit_text(callback: CallbackQuery, text: str, reply_markup=None, **kwargs):
+    """Безопасное редактирование текста без лишних callback.answer()"""
     try:
         await callback.message.edit_text(
             text=text, 
@@ -44,9 +44,8 @@ async def safe_edit_text(callback: CallbackQuery, text: str, reply_markup=None, 
         )
     except TelegramBadRequest as e:
         if "message is not modified" in e.message:
-            await callback.answer()
-        else:
-            raise e
+            return
+        logger.error(f"Safe edit error: {e.message}")
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
@@ -66,50 +65,47 @@ async def cmd_start(message: Message) -> None:
 
 @router.callback_query(F.data == "main_menu")
 async def cb_main_menu(callback: CallbackQuery) -> None:
+    await callback.answer() # Сначала отвечаем Telegram
     user = callback.from_user
     text = f"Привет, <b>{user.first_name}</b>! Выбери раздел 👇"
     await safe_edit_text(callback, text, main_menu_keyboard())
-    await callback.answer()
 
 @router.callback_query(F.data == "about")
 async def cb_about(callback: CallbackQuery) -> None:
-    await safe_edit_text(callback, ABOUT_TEXT, back_keyboard(), disable_web_page_preview=True)
     await callback.answer()
+    await safe_edit_text(callback, ABOUT_TEXT, back_keyboard(), disable_web_page_preview=True)
 
 @router.callback_query(F.data == "projects")
 async def cb_projects(callback: CallbackQuery) -> None:
-    await safe_edit_text(callback, PROJECTS_TEXT, back_keyboard(), disable_web_page_preview=True)
     await callback.answer()
+    await safe_edit_text(callback, PROJECTS_TEXT, back_keyboard(), disable_web_page_preview=True)
 
 @router.callback_query(F.data == "skills")
 async def cb_skills(callback: CallbackQuery) -> None:
-    await safe_edit_text(callback, SKILLS_TEXT, back_keyboard())
     await callback.answer()
+    await safe_edit_text(callback, SKILLS_TEXT, back_keyboard())
 
 @router.callback_query(F.data == "contacts")
 async def cb_contacts(callback: CallbackQuery) -> None:
-    await safe_edit_text(callback, CONTACTS_TEXT, back_keyboard(), disable_web_page_preview=True)
     await callback.answer()
+    await safe_edit_text(callback, CONTACTS_TEXT, back_keyboard(), disable_web_page_preview=True)
 
 # ── AI CHAT LOGIC ─────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "ask_ai")
 async def cb_ask_ai(callback: CallbackQuery, state: FSMContext) -> None:
-    # При входе в чат устанавливаем состояние и ОБНУЛЯЕМ историю
+    await callback.answer() # Критично вызвать до тяжелых операций
     await state.set_state(AIChatStates.chatting)
     await state.update_data(chat_history=[]) 
     
     text = (
         "🤖 <b>Я готов к общению!</b>\n\n"
-        "Задайте любой вопрос о Даулете. Я запоминаю контекст нашей беседы, "
-        "поэтому вы можете задавать уточняющие вопросы."
+        "Задайте любой вопрос о Даулете. Я запоминаю контекст нашей беседы."
     )
     await safe_edit_text(callback, text, ai_chat_keyboard())
-    await callback.answer()
 
 @router.message(AIChatStates.chatting, F.text == "⬅️ Назад в меню")
 async def handle_back_to_menu(message: Message, state: FSMContext) -> None:
-    # При выходе полностью очищаем стейт и историю
     await state.clear()
     user = message.from_user
     text = f"Привет, <b>{user.first_name}</b>! Выбери раздел 👇"
@@ -119,22 +115,18 @@ async def handle_back_to_menu(message: Message, state: FSMContext) -> None:
 async def handle_ai_question(message: Message, state: FSMContext) -> None:
     if not message.text or message.text == "⬅️ Назад в меню": return
     
-    # 1. Получаем текущую историю из FSM
     data = await state.get_data()
     history = data.get("chat_history", [])
 
     thinking = await message.answer("🤔 Думаю...")
     
     try:
-        # 2. Передаем вопрос и историю в ИИ
         response = await ai_service.ask_question(message.text, history=history)
         
-        # 3. Обновляем историю (формат роли: user / model)
+        # Обновляем историю
         history.append({"role": "user", "parts": [message.text]})
         history.append({"role": "model", "parts": [response]})
-        
-        # Сохраняем последние 10 сообщений, чтобы не перегружать контекст
-        await state.update_data(chat_history=history[-10:])
+        await state.update_data(chat_history=history[-6:]) # Держим 3 полных диалога
         
         await thinking.delete()
         await message.answer(
@@ -143,6 +135,11 @@ async def handle_ai_question(message: Message, state: FSMContext) -> None:
             parse_mode="HTML",
             disable_web_page_preview=True
         )
+    except google_exceptions.ResourceExhausted:
+        await thinking.edit_text(
+            "⚠️ <b>Лимит запросов исчерпан.</b>\n\n"
+            "На бесплатном тарифе есть ограничения. Пожалуйста, попробуйте через пару минут."
+        )
     except Exception as e:
         logger.error(f"AI Error: {e}")
-        await thinking.edit_text("😔 Ошибка ИИ. Попробуйте позже.")
+        await thinking.edit_text("😔 Ошибка ИИ. Попробуйте позже или переформулируйте вопрос.")
